@@ -1,2 +1,17 @@
 # GHL-Vocals-Preview
 A ReaScript made to preview custom Guitar Hero Live Vocal Charts
+
+<img width="1282" height="332" alt="image" src="https://github.com/user-attachments/assets/f7850951-643a-43cd-82ed-07f4e81151f4" />
+
+## Installation instructions:
+1. Download .zip of repository
+2. Extract .lua **and** assets folder to **%appdata%/REAPER/Scripts**
+3. In REAPER, go to **Actions > Show action list...**
+4. Click **New action...** and then **Load ReaScript...**
+5. Navigate to **%appdata%/REAPER/Scripts**
+6. Select **GHL_Vocals_Preview.lua** and click **Open**
+7. Optionally, add a keybind, or use the Menu Editor to add the action to a menu
+
+## Additional notes:
+For a better experience, use the included the note names!  
+Requires **Genshin Impact** font (SDK_JP_WEB 85W).
