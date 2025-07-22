@@ -1,5 +1,6 @@
 # GHL-Vocals-Preview
-A ReaScript made to preview custom Guitar Hero Live Vocal Charts
+A ReaScript made to preview custom Guitar Hero Live Vocal Charts.    
+Vocal HUD System independent of my [GHL Preview](https://github.com/GHCripto/GHL-Preview) visualizer.
 
 <img width="1282" height="332" alt="image" src="https://github.com/user-attachments/assets/f7850951-643a-43cd-82ed-07f4e81151f4" />
 
@@ -13,5 +14,5 @@ A ReaScript made to preview custom Guitar Hero Live Vocal Charts
 7. Optionally, add a keybind, or use the Menu Editor to add the action to a menu
 
 ## Additional notes:
-For a better experience, use the included the note names!  
+For a better experience, use the included color map and the vocals note name!  
 Requires **Genshin Impact** font (SDK_JP_WEB 85W).
