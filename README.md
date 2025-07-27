@@ -2,7 +2,7 @@
 A ReaScript made to preview custom Guitar Hero Live Vocal Charts.    
 Vocal HUD System independent of my [GHL Preview](https://github.com/GHCripto/GHL-Preview) visualizer.
 
-<img width="1282" height="332" alt="image" src="https://github.com/user-attachments/assets/f7850951-643a-43cd-82ed-07f4e81151f4" />
+<img width="1002" height="332" alt="image" src="https://github.com/user-attachments/assets/7ca1caa6-7f02-465e-9f6b-ebd9280b22a5" />
 
 ## Installation instructions:
 1. Download .zip of repository
