@@ -1,4 +1,4 @@
-version_num="1.0"
+version_num="1.1"
 
 -- Rastrea el proyecto actual
 local currentProject = reaper.EnumProjects(-1)
