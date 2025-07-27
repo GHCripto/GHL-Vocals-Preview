@@ -20,7 +20,7 @@ local function rgb2num(r, g, b)
 end
 
 gfx.clear = rgb2num(35, 38, 52) -- Background color
-gfx.init("GHL Vocals Preview", 1280, 300, 0, 320, 390) -- Alto, Ancho, Eje X, Eje Y
+gfx.init("GHL Vocals Preview", 1000, 300, 0, 480, 390) -- Alto, Ancho, Eje X, Eje Y
 
 -- Variables para el visualizador de letras
 local vocalsTrack = nil
@@ -559,10 +559,11 @@ local noteLineConfig = {
     hitLineColor             = {r = 1.0, g = 1.0, b = 1.0, a = 1.0},  -- Color blanco de la línea vertical de golpe
     hitLineThickness         = 3,    -- Grosor en píxeles de la línea
     hitLineFadePct           = 0.45, -- Porcentaje de la altura total para el degradado (0.25 = 25%)
-    linesSpacing             = 10,   -- Espaciado vertical en pixeles de las líneas de las notas
+    linesSpacing             = 8,   -- Espaciado vertical en pixeles de las líneas de las notas
     specialNoteRadius        = 10,   -- Tamaño del círculo de las notas sin tono
+    specialNoteYOffset       = 0,    -- Desplazamiento vertical de notas sin tono. 0 = Default, Positivo = arriba, Negativo = abajo
     noteThickness            = 2,    -- Grosor en píxeles de las líneas de las notas y sus conectores
-    noteLineStyle            = "offset_top", -- Estilo de las líneas. Opciones: "default", "offset_top", "offset_bottom"
+    noteLineStyle            = "default", -- Estilo de las líneas. Opciones: "default", "offset_top", "offset_bottom"
 
     -- Rango absoluto de pitch
     minPitch                 = 32,   -- Nora mínima del "mundo" del HUD
@@ -573,16 +574,15 @@ local noteLineConfig = {
     yOffset                  = 0,    -- Posición vertical del HUD; NO TOCAR!!!!!!
     hitLineX                 = 150,  -- Posición horizontal de la línea de golpe
     hitCircleRadius          = 10,   -- tamaño del círculo de la línea de golpe
+    hitCircleYOffset         = 1,    -- Desplazamiento vertical del círculo de golpe. 0 = Default, Positivo = arriba, Negativo = abajo
 
     -- Dinámica de zoom
     dynamicPitchRange        = true, -- Activar/Desactivar el HUD dinámico
     minimumZoomRange         = 18.0, -- Zoom máximo (Rango de notas a mostrar)
-    panZoomSpeed             = 4.0,  -- Suavidad de la cámara (Velocidad de la animación)
+    panZoomSpeed             = 9.0,  -- Suavidad de la cámara (Velocidad de la animación)
+    panZoomBaseSpeed         = 1.5,  -- Velocidad base para el panZoomSpeed. Mayor valor, más velocidad ( 1.5 = GHL)
     vocalScrollSpeed         = 1.1,  -- Velocidad del desplazamiento de las notas. Mayor valor, más velocidad
     vocalScrollSpeedBase     = 295,  -- Velocidad base de las notas en píxeles por segundo (295: GHL)
-    pausedPanZoomFactor      = 0.05, -- Suavidad al rebobinar o empezar desde una pausa
-    -- crushThresholdPct        = 1.3,
-    -- crushFactor              = 0.75, -- Sensibilidad del aplastamiento del HUD
 
     -- Márgenes independientes en píxeles
     pixelMarginTop           = 24.5,   -- Padding superior en pixeles del área segura del HUD
@@ -610,9 +610,11 @@ local noteLineConfig = {
         { min = 32, max = 45 },
         { min = 39, max = 52 },
         { min = 46, max = 60 },
-        -- { min = 53, max = 67 }, -- ZONA CENTRAL POR DEFECTO (no funciona)
-        { min = 54, max = 65 }, -- Zona "central" de estabilidad
+        { min = 53, max = 67 }, -- Cámara por defecto (GHL)
+        { min = 54, max = 65 },
         { min = 59, max = 73 },
+        -- { min = 64, max = 74 }, -- Nuevo rango adicional
+        -- { min = 65, max = 77 }, -- Nuevo rango adicional
         { min = 67, max = 80 },
         { min = 74, max = 87 },
     },
@@ -625,8 +627,9 @@ local noteLineConfig = {
     referencePitchIntervalForSpacing = 3, -- El intervalo de pitch que define el espaciado visual estándar (NO TOCAR!!!!)
     staffLinePaddingTop      = 19,     -- Píxeles de margen superior para las líneas | TEST: 27.4
     staffLinePaddingBottom   = 24,     -- Píxeles de margen inferior para las líneas | TEST: 34.6
-    staffLineThickness       = 1,      -- Grosor en pixeles (2 en GH, 1 por defecto)
-    ghlGuideLineAlpha        = 0.17,   -- Opacidad de las líneas guia
+    staffLineThickness       = 2,      -- Grosor en pixeles (2 en GH, 1 por defecto)
+    staffLineYOffset         = 0,      -- Desplazamiento vertical. 0 = Default, Positivo = arriba, Negativo = abajo
+    ghlGuideLineAlpha        = 0.1,    -- Opacidad de las líneas guia
 }
 
 -- Función auxiliar para encontrar la mejor zona estática para un rango de notas
@@ -702,22 +705,48 @@ local function recalcTargetPitchRange(currentTimeSec, noteList, deltaTime)
     end
 end
 
--- Interpola suavemente cada frame
+-- Interpola suavemente la cámara, pero con una parada controlada
 local function updateDisplayPitchRange(deltaTime)
     local c = noteLineConfig
-    local alpha
+    
+    -- Definir un umbral de proximidad. No deja que la cámara llegue al 100% del objetivo
+    local minimumDistance = 0.001
 
-    -- La animación suave basada en 'deltaTime' SÓLO se usa para la reproducción normal y fluida
-    if deltaTime > 0 and deltaTime < c.jumpThresholdSec then
-        alpha = 1 - math.exp(-c.panZoomSpeed * deltaTime)
+    -- Calcular la distancia que falta para llegar al target
+    local minDiff = c.targetMinDisplayPitch - c.currentMinDisplayPitch
+    local maxDiff = c.targetMaxDisplayPitch - c.currentMaxDisplayPitch
+
+    -- Calcular la velocidad final de la cámara
+    local speed = c.panZoomBaseSpeed * c.panZoomSpeed
+    
+    -- Si el tiempo se detiene o va hacia atrás, asume un framerate de 60fps para que no se pare
+    if deltaTime <= 0 then deltaTime = 1/60 end
+    
+    -- Máximo movimiento permitido para este frame
+    local maxMovement = speed * deltaTime
+
+    -- --- Lógica principal del movimiento ---
+    
+    -- Mover el Min Pitch:
+    -- Esto comprueba si el movimiento de este frame pasaría del umbral de parada
+    if math.abs(minDiff) <= maxMovement + minimumDistance then
+        -- Si es así, no salta al final. Posiciona la cámara justo a `minimumDistance` del objetivo
+        local direction = minDiff > 0 and 1 or -1
+        c.currentMinDisplayPitch = c.targetMinDisplayPitch - (minimumDistance * direction)
     else
-        -- Para PAUSAS (deltaTime=0), REWIND (deltaTime<0) y SALTOS (deltaTime > threshold),
-        -- Se usa una velocidad de animación fija por frame que garantiza una transición suave
-        alpha = c.pausedPanZoomFactor
+        -- Si no, realiza el movimiento lineal normal
+        local direction = minDiff > 0 and 1 or -1
+        c.currentMinDisplayPitch = c.currentMinDisplayPitch + (direction * maxMovement)
     end
-
-    c.currentMinDisplayPitch = c.currentMinDisplayPitch + (c.targetMinDisplayPitch - c.currentMinDisplayPitch) * alpha
-    c.currentMaxDisplayPitch = c.currentMaxDisplayPitch + (c.targetMaxDisplayPitch - c.currentMaxDisplayPitch) * alpha
+    
+    -- Mover el Max Pitch:
+    if math.abs(maxDiff) <= maxMovement + minimumDistance then
+        local direction = maxDiff > 0 and 1 or -1
+        c.currentMaxDisplayPitch = c.targetMaxDisplayPitch - (minimumDistance * direction)
+    else
+        local direction = maxDiff > 0 and 1 or -1
+        c.currentMaxDisplayPitch = c.currentMaxDisplayPitch + (direction * maxMovement)
+    end
 end
 
 -- Convierte frases a lista de notas
@@ -898,6 +927,10 @@ function drawLyricsVisualizer()
                 return
             end
 
+            -- LEER EL OFFSET (o usar 0 si no está definido)
+            -- La inversión del signo ocurre aquí para que positivo sea arriba.
+            local yOffset = -(config.staffLineYOffset or 0)
+
             -- Calcular el espaciado en píxeles estándar basado en el intervalo de referencia
             local refInterval = config.referencePitchIntervalForSpacing or 3
             local y1 = getLinearYPosition(config.currentMinDisplayPitch, config, calculatePaddedY)
@@ -905,10 +938,11 @@ function drawLyricsVisualizer()
             local pixel_step_y = math.abs(y1 - y2)
 
             -- Anclar el pentagrama usando la posición lineal de su primera nota
-            local anchorY = getLinearYPosition(stave[1], config, calculatePaddedY)
+            -- APLICAR EL OFFSET AL ANCLA
+            local anchorY = getLinearYPosition(stave[1], config, calculatePaddedY) + yOffset
             
             local thickness = config.staffLineThickness or 1
-            local rectY_offset = math.floor(thickness / 2)
+            local rectY_offset = math.floor(thickness / 2)  -- Para centrar la línea
             local clipTopY = (config.yOffset - config.areaHeight) + (config.staffLinePaddingTop or 0)
             local clipBottomY = config.yOffset - (config.staffLinePaddingBottom or 0)
 
@@ -918,7 +952,9 @@ function drawLyricsVisualizer()
                 local lineY = anchorY - ((i - 1) * pixel_step_y)
                 
                 if lineY >= clipTopY and lineY <= clipBottomY then
+                    -- Calcular la posición Y del rectángulo considerando el grosor
                     local rectY = lineY - rectY_offset
+                    -- Dibujar la línea como un rectángulo con el grosor especificado
                     gfx.rect(0, rectY, gfx.w, thickness, 1)
                 end
             end
@@ -1196,28 +1232,36 @@ function drawLyricsVisualizer()
                             if lyric.pitch == 29 then
                                 -- Nota 29: Dibujar solo un círculo
                                 local circleRadius = noteLineConfig.specialNoteRadius
+                                local yOffset = noteLineConfig.specialNoteYOffset or 0
+                                local finalCircleY = lineY - yOffset -- Restamos para que positivo sea arriba
+
                                 if startX >= noteLineConfig.hitLineX then
-                                    gfx.circle(startX, lineY, circleRadius, 1, 1)
+                                    gfx.circle(startX, finalCircleY, circleRadius, 1, 1)
                                 elseif endX > noteLineConfig.hitLineX then
-                                    gfx.circle(noteLineConfig.hitLineX, lineY, circleRadius, 1, 1)
+                                    gfx.circle(noteLineConfig.hitLineX, finalCircleY, circleRadius, 1, 1)
                                 end
                             elseif lyric.pitch == 26 or lyric.isToneless then
                                 -- Nota 26: Dibujar círculo al inicio y líneas normales
                                 local circleRadius = noteLineConfig.specialNoteRadius
                                 local noteThickness = noteLineConfig.noteThickness or 1
-                                local yOffset = math.floor(noteThickness / 2)
+                                local yOffsetRect = math.floor(noteThickness / 2)
 
-                                -- Se añade +1 al ancho para cerrar el gap de 1px con los conectores
-                                gfx.rect(visibleStartX, upperLineY - yOffset, endX - visibleStartX + 1, noteThickness, 1)
-                                gfx.rect(visibleStartX, lowerLineY - yOffset, endX - visibleStartX + 1, noteThickness, 1)
+                                -- Las líneas rectangulares se quedan en su sitio original
+                                gfx.rect(visibleStartX, upperLineY - yOffsetRect, endX - visibleStartX + 1, noteThickness, 1)
+                                gfx.rect(visibleStartX, lowerLineY - yOffsetRect, endX - visibleStartX + 1, noteThickness, 1)
+
+                                -- Calculamos el offset SÓLO para el círculo
+                                local yOffsetCircle = noteLineConfig.specialNoteYOffset or 0
+                                local finalCircleY = lineY - yOffsetCircle -- Restamos para que positivo sea arriba
 
                                 if startX >= noteLineConfig.hitLineX then
-                                    gfx.circle(startX, lineY, circleRadius, 1, 1)
+                                    gfx.circle(startX, finalCircleY, circleRadius, 1, 1)
                                 elseif endX > noteLineConfig.hitLineX then
-                                    gfx.circle(noteLineConfig.hitLineX, lineY, circleRadius, 1, 1)
+                                    gfx.circle(noteLineConfig.hitLineX, finalCircleY, circleRadius, 1, 1)
                                 end
+
                                 if i == lastNoteIndex and endX < gfx.w then
-                                    gfx.rect(endX - yOffset, upperLineY - yOffset, noteThickness, (lowerLineY - upperLineY) + noteThickness, 1)
+                                    gfx.rect(endX - yOffsetRect, upperLineY - yOffsetRect, noteThickness, (lowerLineY - upperLineY) + noteThickness, 1)
                                 end
                             else
                                 -- Notas normales: Dibujar las dos líneas horizontales con grosor configurable
@@ -1549,14 +1593,21 @@ function drawLyricsVisualizer()
         
         -- Dibujar el efecto de golpeo si se detectó
         if hitDetected then
-            -- Dibujar círculos de efecto en la línea de golpeo
+            -- LEER EL NUEVO OFFSET DESDE LA CONFIGURACIÓN
+            local yOffset = noteLineConfig.hitCircleYOffset or 0
+            
+            -- CALCULAR LA POSICIÓN Y FINAL
+            -- Restamos el offset para que un valor positivo mueva el círculo hacia arriba
+            local finalHitY = hitY - yOffset
+
+            -- Dibujar círculos de efecto en la línea de golpeo (usando la nueva posición Y)
             gfx.r, gfx.g, gfx.b, gfx.a = noteLineConfig.hitColor.r, noteLineConfig.hitColor.g, noteLineConfig.hitColor.b, 0.7
             local outerRadius = noteLineConfig.hitCircleRadius * 1.5
-            gfx.circle(noteLineConfig.hitLineX, hitY, outerRadius, 0, 1)
+            gfx.circle(noteLineConfig.hitLineX, finalHitY, outerRadius, 0, 1)
             
-            -- Dibujar círculo interno
+            -- Dibujar círculo interno (usando la nueva posición Y)
             gfx.r, gfx.g, gfx.b, gfx.a = 1.0, 1.0, 0.3, 1.0
-            gfx.circle(noteLineConfig.hitLineX, hitY, noteLineConfig.hitCircleRadius, 1, 1)
+            gfx.circle(noteLineConfig.hitLineX, finalHitY, noteLineConfig.hitCircleRadius, 1, 1)
         end
     end
     
@@ -1756,6 +1807,46 @@ function Main()
     gfx.x,gfx.y=5,gfx.h-20
     gfx.setfont(1, "SDK_JP_Web 85W", 15) -- Genshin Impact font
     gfx.drawstr(string.format("Version %s",version_num))
+
+    -- RELOJ MONOESPACIADO (GHL)
+    -- EL texto "Time"
+    local titleString = "Time:"
+    local titleW, titleH = gfx.measurestr(titleString)
+    gfx.x = (gfx.w - titleW) / 2
+    gfx.y = gfx.h - 35
+    gfx.drawstr(titleString)
+
+    -- El Valor del Tiempo con espaciado fijo (GHL)
+    local totalSeconds = reaper.TimeMap2_beatsToTime(0, curBeat)
+    local timeString = string.format("%.3fs", totalSeconds)
+
+    -- Define el ancho fijo para cada carácter del reloj
+    -- Valor ajustable por si se cambia el tamaño de la fuente
+    local charWidth = 9
+    
+    -- Calcula el ancho total del bloque de tiempo
+    local totalBlockWidth = #timeString * charWidth
+
+    -- Calcula la posición X de inicio para centrar el bloque completo
+    local startX = (gfx.w - totalBlockWidth) / 2
+    local timeY = gfx.h - 20
+
+    -- Esto dibujar cada carácter del reloj, uno por uno
+    for i = 1, #timeString do
+        local char = timeString:sub(i, i)
+        
+        -- Mide el ancho del carácter actual para centrarlo dentro de su espaciado
+        local singleCharW, _ = gfx.measurestr(char)
+
+        -- Calcula la posición X del espaciado para este carácter
+        local boxX = startX + ((i - 1) * charWidth)
+
+        -- Ajusta la posición X para centrar el carácter dentro de su espaciado
+        gfx.x = boxX + (charWidth - singleCharW) / 2
+        gfx.y = timeY
+        
+        gfx.drawstr(char)
+    end
     
     gfx.update()
 
