@@ -1,0 +1,186 @@
+desc:Pitch Guide by GHCripto
+//=============================================================================
+// Pitch Guide by GHCripto
+// Modo Reproducción: Lee X segundos de notas a futuro enviado por Lua para latencia cero.
+// Modo Edición: Se comporta como un sintetizador MIDI nativo de respuesta instantánea.
+//=============================================================================
+
+options:gmem=Effect_PitchGuide
+
+@init
+sq_phase = 0;
+tr_phase = 0;
+
+master_gain = 0;
+target_gain = 0;
+current_freq = 0;
+target_freq = 0;
+
+attack_coef = exp(-1.0 / (srate * 0.001));
+release_coef = exp(-1.0 / (srate * 0.008));
+glide_coef = exp(-1.0 / (srate * 0.025));
+
+active_midi_note = -1;
+midi_active = 0;
+midi_freq = 0;
+
+@block
+// LECTURA DE ESTADOS BÁSICOS
+enabled_gmem = gmem[0];
+is_playing = gmem[3]; // 1 = Reproducción, 0 = Pausa/Stop
+
+// LECTURA MIDI NATIVO (Editor de Reaper / Teclado)
+while (midirecv(offset, msg1, msg2, msg3)) (
+    status = msg1 & 240;
+    note = msg2;
+    vel = msg3;
+    
+    // Note On
+    status == 144 && vel > 0 ? (
+        active_midi_note = note;
+        midi_active = 1;
+        midi_freq = 440.0 * (2.0 ^ ((note - 69.0) / 12.0));
+    ) : 
+    // Note Off
+    (status == 128 || (status == 144 && vel == 0)) ? (
+        note == active_midi_note ? (
+            midi_active = 0;
+        );
+    );
+);
+
+// Calcular Coeficientes de Envolvente dinámicamente si hay fundido
+fade_sec = gmem[4];
+fade_sec > 0 ? (
+    attack_coef = exp(-1.0 / (srate * fade_sec));
+    release_coef = attack_coef;
+) : (
+    attack_coef = 0;
+    release_coef = 0;
+);
+
+// Sincronizar reloj interno con el bloque actual
+current_time = play_position;
+
+@sample
+// Avanzar reloj interno sample a sample para precisión perfecta
+current_time += 1.0 / srate;
+
+is_playing > 0 ? (
+    // ==========================================
+    // MODO REPRODUCCIÓN (Autónomo leyendo Buffer)
+    // ==========================================
+    found_freq = 0;
+    found_instant = 0;
+    
+    enabled_gmem > 0 ? (
+        num_notes = gmem[10];
+        i = 0;
+        while(i < num_notes && found_freq == 0) (
+            offset = 20 + i * 4;
+            start_t = gmem[offset + 0];
+            end_t   = gmem[offset + 1];
+            
+            current_time < start_t ? (
+                // Todavía no llegamos a esta nota. ¿Será un conector de la anterior?
+                i > 0 ? (
+                    prev_offset = 20 + (i - 1) * 4;
+                    prev_end = gmem[prev_offset + 1];
+                    current_time > prev_end ? (
+                        instant = gmem[offset + 3];
+                        instant == 0 ? ( // 0 = Es un conector (+)
+                            prev_freq = gmem[prev_offset + 2];
+                            curr_freq = gmem[offset + 2];
+                            t_factor = (current_time - prev_end) / (start_t - prev_end);
+                            found_freq = prev_freq + (curr_freq - prev_freq) * t_factor;
+                            found_instant = 0; // Conectores deslizan suavemente
+                        );
+                    );
+                );
+                // Como las notas vienen en orden, si current_time < start_t, no necesitamos buscar más allá.
+                i = num_notes; // Romper el loop (Optimización)
+            ) : current_time <= end_t ? (
+                // Estamos exactamente dentro de esta nota
+                found_freq = gmem[offset + 2];
+                found_instant = gmem[offset + 3];
+                i = num_notes; // Romper el loop
+            );
+            
+            i += 1;
+        );
+    );
+
+    // Aplicar lo encontrado
+    found_freq > 0 ? (
+        target_gain = 0.15;
+        target_freq != found_freq ? (
+            target_freq = found_freq;
+            (current_freq == 0 || found_instant > 0) ? current_freq = target_freq;
+        );
+    ) : (
+        target_gain = 0;
+        // No reseteamos target_freq para que el release suene en el tono correcto
+    );
+
+) : (
+    // ==========================================
+    // MODO EDICIÓN (Charting en Pausa/Stop)
+    // ==========================================
+    midi_active > 0 ? (
+        target_gain = 0.15;
+        target_freq != midi_freq ? (
+            target_freq = midi_freq;
+            current_freq = target_freq; // Instantáneo para MIDI nativo
+        );
+    ) : enabled_gmem > 0 && gmem[1] > 0 ? (
+        // Click al mover el cursor en pausa desde Lua
+        // Lua ahora escribe en gmem[1] la frecuencia del click manual
+        target_gain = 0.15;
+        target_freq != gmem[1] ? (
+            target_freq = gmem[1];
+            current_freq = target_freq;
+        );
+    ) : (
+        target_gain = 0;
+    );
+);
+
+// Envelopes (Amplitude)
+attack_coef == 0 ? (
+    master_gain = target_gain;
+) : master_gain < target_gain ? (
+    master_gain = target_gain + (master_gain - target_gain) * attack_coef;
+) : (
+    master_gain = target_gain + (master_gain - target_gain) * release_coef;
+);
+
+// Glide (Frecuencia)
+// Solo aplicar glide si NO es una nota instantánea (found_instant == 0 significa conector)
+found_instant == 0 && current_freq != target_freq ? (
+    current_freq = target_freq + (current_freq - target_freq) * glide_coef;
+) : (
+    current_freq = target_freq; // Fuerza bruta: salto instantáneo absoluto
+);
+
+// Sintetizador
+master_gain > 0.0001 ? (
+    inc = current_freq / srate;
+    
+    // Cuadrada (0.57 gain)
+    sq_phase += inc;
+    sq_phase >= 1.0 ? sq_phase -= 1.0;
+    sq_val = (sq_phase < 0.5 ? 1.0 : -1.0) * 0.57;
+
+    // Triangular (0.50 gain)
+    tr_phase += inc;
+    tr_phase >= 1.0 ? tr_phase -= 1.0;
+    tr_val = (tr_phase < 0.5 ? (tr_phase * 4.0 - 1.0) : (3.0 - tr_phase * 4.0)) * 0.50;
+
+    out = (sq_val + tr_val) * master_gain;
+    spl0 = out;
+    spl1 = out;
+) : (
+    current_freq = 0;
+    spl0 = 0;
+    spl1 = 0;
+);

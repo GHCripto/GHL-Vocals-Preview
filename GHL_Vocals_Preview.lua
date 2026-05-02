@@ -1,4 +1,4 @@
-version_num="1.2"
+version_num="1.3"
 
 -- Rastrea el proyecto actual
 local currentProject = reaper.EnumProjects(-1)
@@ -22,10 +22,14 @@ end
 gfx.clear = rgb2num(30, 30, 40) -- color de fondo de la ventana
 gfx.init("GHL Vocals Preview", 1000, 300, 0, 480, 150) -- Alto, Ancho, Eje X, Eje Y
 
--- Variables para el visualizador de letras
-local vocalsTrack = nil
-local phrases = {}
-local currentPhrase = 1
+-- Configurar conexión con el sintetizador JSFX para el Pitch Guide
+reaper.gmem_attach("Effect_PitchGuide")
+
+-- Variables Globales
+local char = -1
+vocalsTrack = nil
+phrases = {}
+currentPhrase = 1
 local phraseMarkerNote = 105  -- Nota MIDI para el marcador de frases (P1)
 local phraseMarkerNoteP2 = 106  -- Marcador de frases alternativo (Rock Band P2 / Harmonías)
 local function isPhraseMarker(p) return p == phraseMarkerNote or p == phraseMarkerNoteP2 end
@@ -278,6 +282,89 @@ function updateVocals()
     return result
 end
 
+-- Configuración para las líneas de notas (márgenes independientes y rewind correcto)
+local noteLineConfig = {
+    -- COLORES
+    backgroundColor          = {r = 0.1176471, g = 0.1176471, b = 0.1568627, a = 0.1},   -- Fondo del área de las líneas de notas
+    activeColor              = {r = 0.2, g = 0.8, b = 1.0, a = 1.0},    -- Color de notas activas (FRASES COMPLETAS)
+    inactiveColor            = {r = 0.2, g = 0.8, b = 1.0, a = 1.0},    -- Color de notas inactivas (FRASES COMPLETAS)
+    sungColor                = {r = 0.2, g = 0.8, b = 1.0, a = 1.0},    -- Color de notas ya cantadas (pasado)
+    hitColor                 = {r = 1.0, g = 1.0, b = 0.3, a = 1.0},    -- Color de notas siendo cantadas (presente)
+    hitLineColor             = {r = 1.0, g = 1.0, b = 1.0, a = 1.0},    -- Color blanco de la línea vertical de golpe
+    hitLineThickness         = 2,                                       -- Grosor en píxeles de la línea
+    hitLineFadePct           = 0.45,                                    -- Porcentaje de la altura total para el degradado (0.25 = 25%)
+    linesSpacing             = 8,                                       -- Espaciado vertical en pixeles de las líneas de las notas
+    specialNoteRadius        = 10,                                      -- Tamaño del círculo de las notas sin tono
+    specialNoteYOffset       = 0.5,                                       -- Desplazamiento vertical de notas sin tono. 0 = Default, Positivo = arriba, Negativo = abajo
+    noteThickness            = 2,                                       -- Grosor en píxeles de las líneas de las notas y sus conectores
+    noteLineStyle            = "default",                               -- Estilo de las líneas. Opciones: "default", "offset_top", "offset_bottom"
+
+    -- RANGO ABSOLUTO DE PITCH
+    minPitch                 = 32,                                      -- Nota mínima del "mundo" del HUD
+    maxPitch                 = 87,                                      -- Nota máxima del "mundo" del HUD
+    
+    -- REFERENCIA DE RESOLUCIÓN
+    referenceScreenHeight    = 1080,                                    -- Altura de referencia (1080p)
+
+    -- DIMENSIONES DEL HUD
+    backgroundHeight         = 0.50,                                    -- Altura del fondo del gameplay (50% de la pantalla)
+    yOffset                  = 0,                                       -- Posición vertical (se calcula dinámicamente)
+    
+    -- LÍNEA DE GOLPE (HITLINE)
+    hitLineX                 = 150,                                     -- Posición horizontal de la línea de golpe (px)
+    hitLineHeightMultiplier  = 1.5,                                     -- Multiplicador de altura de la HIT LINE en base a "highwayGameplayHeight"
+    hitLineFollowsOffset     = false,                                   -- Activar/Desactivar el centrado vertical en base a "verticalCenterOffset"
+    hitCircleRadius          = 10,                                      -- tamaño del círculo
+    hitCircleYOffset         = 1,                                       -- offset vertical
+
+    -- ALTURA DEL ÁREA JUGABLE
+    highwayGameplayHeight    = 0.082,                                   -- Altura total del área de juego (8.2% de la pantalla)
+    verticalCenterOffset     = -14.0,                                   -- Desfase vertical del área de juego en pixeles
+
+    -- ZOOM DINÁMICO
+    minimumZoomRange         = 18.0,                                    -- Mínimo de semitonos a mostrar
+    cameraPadding            = 2.0,                                     -- Padding +/- 2 semitonos
+    
+    -- VELOCIDAD DE ANIMACIÓN
+    panZoomSpeed             = 9.0,                                     -- Suavidad de la cámara
+    panZoomBaseSpeed         = 1.0,                                     -- Velocidad base (GHL: 1.0)
+
+    -- BUFFERS DE TIEMPO PARA EL CÁLCULO
+    -- Valores directos del binario GHL (FUN_1402ad7a0): lookahead = 4.5 / vocalScrollSpeed, lookbehind = 1.0 / vocalScrollSpeed
+    viewFutureSec            = 4.5,                                     -- Constante GHL (se divide por vocalScrollSpeed en runtime)
+    viewPastSec              = 1.0,                                     -- Constante GHL (se divide por vocalScrollSpeed en runtime)
+    
+    -- Estados internos de cámara
+    currentMinDisplayPitch   = 52.0, 
+    currentMaxDisplayPitch   = 67.0, 
+    targetMinDisplayPitch    = 52.0, 
+    targetMaxDisplayPitch    = 67.0, 
+    
+    -- VARIABLE INTERNA PARA CÁLCULO (NO TOCAR)
+    _lastTimeSec             = -1000.0,
+
+    vocalScrollSpeed         = 1.1,                                     -- Velocidad del desplazamiento de las notas. Mayor valor, más velocidad
+    vocalScrollSpeedBase     = 1920 / 5.5,                              -- Velocidad base de las notas en píxeles por segundo (GHL: 1920 / 5.5 = ~349.09)
+
+    -- PIXEL SNAP POR EJE (GHL)
+    ghlPerfectPixelSnapX     = true,                                    -- Eje X: true = pixel perfecto, false = bordes suaves
+    ghlPerfectPixelSnapY     = true,                                    -- Eje Y: true = pixel perfecto, false = bordes suaves
+
+    -- PITCH GUIDE (Guía Tonal)
+    pitchGuideEnabled        = true,                                    -- Activar el tono de guía (requiere plugin JSFX)
+    pitchGuideBufferSeconds  = 5.0,                                     -- Segundos de notas futuras que se envían al sintetizador
+    pitchGuideFadeMs         = 0.0,                                     -- Milisegundos de fundido (Fade In/Out) para evitar clicks de audio
+    
+    -- DEBUG
+    showPaddingLines         = false,                                   -- Activar/Desactivar líneas del padding de pixeles (solo números impares)
+    paddingLineThickness     = 2,                                       -- Grosor en píxeles (solo números impares)
+    paddingLineColor         = {r = 1.0, g = 0.3, b = 0.3, a = 1.0},    -- Rojo semitransparente
+    
+    staffLineThickness       = 2,                                       -- Grosor en pixeles (2 en GH, 1 por defecto)
+    staffLineYOffset         = 0,                                       -- Desplazamiento vertical. 0 = Default, Positivo = arriba, Negativo = abajo
+    ghlGuideLineAlpha        = 0.1,                                     -- Opacidad de las líneas guia
+}
+
 -- Función para encontrar la pista vocal (prioriza PRO VOCALS sobre PART VOCALS)
 function findVocalsTrack()
     -- Primero busca PRO VOCALS
@@ -286,6 +373,32 @@ function findVocalsTrack()
     -- Si no existe, busca PART VOCALS como respaldo
     if not vocalsTrack then
         vocalsTrack = findTrack("PART VOCALS")
+    end
+    if vocalsTrack then
+        -- Intentar añadir el FX automáticamente si la guía tonal está activada
+        if noteLineConfig.pitchGuideEnabled then
+            local fxExists = false
+            local fxCount = reaper.TrackFX_GetCount(vocalsTrack)
+            
+            -- Bucle para leer los nombres de todos los efectos actuales
+            for i = 0, fxCount - 1 do
+                local _, fxName = reaper.TrackFX_GetFXName(vocalsTrack, i)
+                -- Buscamos una coincidencia parcial ignorando prefijos de Reaper y mayúsculas
+                if string.find(string.lower(fxName), "pitch guide") or 
+                   string.find(string.lower(fxName), "pitch_guide") then
+                    fxExists = true
+                    break
+                end
+            end
+            
+            -- Si el bucle termina y no lo encontró, forzamos la creación (usando 1)
+            if not fxExists then
+                local fxIndex = reaper.TrackFX_AddByName(vocalsTrack, "Pitch_Guide.jsfx", false, 1)
+                if fxIndex < 0 then
+                    reaper.TrackFX_AddByName(vocalsTrack, "Pitch Guide", false, 1)
+                end
+            end
+        end
     end
     
     return vocalsTrack ~= nil
@@ -573,84 +686,6 @@ function updateLyricsActiveState(currentTime)
         end
     end
 end
-
--- Configuración para las líneas de notas (márgenes independientes y rewind correcto)
-local noteLineConfig = {
-    -- COLORES
-    backgroundColor          = {r = 0.1176471, g = 0.1176471, b = 0.1568627, a = 0.1},   -- Fondo del área de las líneas de notas
-    activeColor              = {r = 0.2, g = 0.8, b = 1.0, a = 1.0},    -- Color de notas activas (FRASES COMPLETAS)
-    inactiveColor            = {r = 0.2, g = 0.8, b = 1.0, a = 1.0},    -- Color de notas inactivas (FRASES COMPLETAS)
-    sungColor                = {r = 0.2, g = 0.8, b = 1.0, a = 1.0},    -- Color de notas ya cantadas (pasado)
-    hitColor                 = {r = 1.0, g = 1.0, b = 0.3, a = 1.0},    -- Color de notas siendo cantadas (presente)
-    hitLineColor             = {r = 1.0, g = 1.0, b = 1.0, a = 1.0},    -- Color blanco de la línea vertical de golpe
-    hitLineThickness         = 2,                                       -- Grosor en píxeles de la línea
-    hitLineFadePct           = 0.45,                                    -- Porcentaje de la altura total para el degradado (0.25 = 25%)
-    linesSpacing             = 8,                                       -- Espaciado vertical en pixeles de las líneas de las notas
-    specialNoteRadius        = 10,                                      -- Tamaño del círculo de las notas sin tono
-    specialNoteYOffset       = 0.5,                                       -- Desplazamiento vertical de notas sin tono. 0 = Default, Positivo = arriba, Negativo = abajo
-    noteThickness            = 2,                                       -- Grosor en píxeles de las líneas de las notas y sus conectores
-    noteLineStyle            = "default",                               -- Estilo de las líneas. Opciones: "default", "offset_top", "offset_bottom"
-
-    -- RANGO ABSOLUTO DE PITCH
-    minPitch                 = 32,                                      -- Nota mínima del "mundo" del HUD
-    maxPitch                 = 87,                                      -- Nota máxima del "mundo" del HUD
-    
-    -- REFERENCIA DE RESOLUCIÓN
-    referenceScreenHeight    = 1080,                                    -- Altura de referencia (1080p)
-
-    -- DIMENSIONES DEL HUD
-    backgroundHeight         = 0.50,                                    -- Altura del fondo del gameplay (50% de la pantalla)
-    yOffset                  = 0,                                       -- Posición vertical (se calcula dinámicamente)
-    
-    -- LÍNEA DE GOLPE (HITLINE)
-    hitLineX                 = 150,                                     -- Posición horizontal de la línea de golpe (px)
-    hitLineHeightMultiplier  = 1.5,                                     -- Multiplicador de altura de la HIT LINE en base a "highwayGameplayHeight"
-    hitLineFollowsOffset     = false,                                   -- Activar/Desactivar el centrado vertical en base a "verticalCenterOffset"
-    hitCircleRadius          = 10,                                      -- tamaño del círculo
-    hitCircleYOffset         = 1,                                       -- offset vertical
-
-    -- ALTURA DEL ÁREA JUGABLE
-    highwayGameplayHeight    = 0.082,                                   -- Altura total del área de juego (8.2% de la pantalla)
-    verticalCenterOffset     = -14.0,                                   -- Desfase vertical del área de juego en pixeles
-
-    -- ZOOM DINÁMICO
-    minimumZoomRange         = 18.0,                                    -- Mínimo de semitonos a mostrar
-    cameraPadding            = 2.0,                                     -- Padding +/- 2 semitonos
-    
-    -- VELOCIDAD DE ANIMACIÓN
-    panZoomSpeed             = 9.0,                                     -- Suavidad de la cámara
-    panZoomBaseSpeed         = 1.0,                                     -- Velocidad base (GHL: 1.0)
-
-    -- BUFFERS DE TIEMPO PARA EL CÁLCULO
-    -- Valores directos del binario GHL (FUN_1402ad7a0): lookahead = 4.5 / vocalScrollSpeed, lookbehind = 1.0 / vocalScrollSpeed
-    viewFutureSec            = 4.5,                                     -- Constante GHL (se divide por vocalScrollSpeed en runtime)
-    viewPastSec              = 1.0,                                     -- Constante GHL (se divide por vocalScrollSpeed en runtime)
-    
-    -- Estados internos de cámara
-    currentMinDisplayPitch   = 52.0, 
-    currentMaxDisplayPitch   = 67.0, 
-    targetMinDisplayPitch    = 52.0, 
-    targetMaxDisplayPitch    = 67.0, 
-    
-    -- VARIABLE INTERNA PARA CÁLCULO (NO TOCAR)
-    _lastTimeSec             = -1000.0,
-
-    vocalScrollSpeed         = 1.1,                                     -- Velocidad del desplazamiento de las notas. Mayor valor, más velocidad
-    vocalScrollSpeedBase     = 1920 / 5.5,                              -- Velocidad base de las notas en píxeles por segundo (GHL: 1920 / 5.5 = ~349.09)
-
-    -- PIXEL SNAP POR EJE (GHL)
-    ghlPerfectPixelSnapX     = true,                                    -- Eje X: true = pixel perfecto, false = bordes suaves
-    ghlPerfectPixelSnapY     = true,                                    -- Eje Y: true = pixel perfecto, false = bordes suaves
-
-    -- DEBUG
-    showPaddingLines         = false,                                   -- Activar/Desactivar líneas del padding de pixeles (solo números impares)
-    paddingLineThickness     = 2,                                       -- Grosor en píxeles (solo números impares)
-    paddingLineColor         = {r = 1.0, g = 0.3, b = 0.3, a = 1.0},    -- Rojo semitransparente
-    
-    staffLineThickness       = 2,                                       -- Grosor en pixeles (2 en GH, 1 por defecto)
-    staffLineYOffset         = 0,                                       -- Desplazamiento vertical. 0 = Default, Positivo = arriba, Negativo = abajo
-    ghlGuideLineAlpha        = 0.1,                                     -- Opacidad de las líneas guia
-}
 
 -- Calcula los límites físicos de la pantalla
 local function getHudBounds(ctxHeight)
@@ -940,6 +975,25 @@ function drawLyricsVisualizer()
         return snapY(finalY)
     end
 
+    -- Inversa de getNoteYPosition: convierte un píxel Y de la hitline a Pitch (incluyendo conectores)
+    local function getPitchFromYPosition(y, bounds)
+        local c = noteLineConfig
+        local minPaddedY = bounds.top
+        local maxPaddedY = bounds.bottom
+        
+        -- clamp y
+        local clampedY = math.max(minPaddedY, math.min(maxPaddedY, y))
+        local normalizedPitch = (maxPaddedY - clampedY) / (maxPaddedY - minPaddedY)
+        local pitch = (normalizedPitch * (c.currentMaxDisplayPitch - c.currentMinDisplayPitch)) + c.currentMinDisplayPitch
+        
+        return pitch
+    end
+
+    -- Convertidor MIDI a Hz para el sintetizador
+    local function midiToFrequency(midiNote)
+        return 440.0 * (2.0 ^ ((midiNote - 69.0) / 12.0))
+    end
+
     local currentTimeSec = reaper.TimeMap2_beatsToTime(0, curBeat)
     local deltaTime      = currentTimeSec - (noteLineConfig._lastTimeSec or currentTimeSec)
     noteLineConfig._lastTimeSec = currentTimeSec
@@ -1099,6 +1153,7 @@ function drawLyricsVisualizer()
         -- Variable para rastrear si hay alguna nota activa cruzando la línea de golpeo
         local hitDetected = false
         local hitY = 0
+        local hitPitch = nil
         
         -- Función para dibujar líneas de notas para una frase
         local function drawNoteLines(phrase, opacity)
@@ -1275,6 +1330,9 @@ function drawLyricsVisualizer()
                             if isHitting then
                                 hitDetected = true
                                 hitY = lineY
+                                
+                                local isToneless = (lyric.pitch == 26 or lyric.pitch == 29 or lyric.isToneless)
+                                hitPitch = isToneless and nil or lyric.pitch
                             end
                         elseif lyric.isActive then
                             gfx.r = noteLineConfig.activeColor.r
@@ -1744,6 +1802,7 @@ function drawLyricsVisualizer()
                                         local hitConnectorY = originalStartY + m * (noteLineConfig.hitLineX - originalStartX)
                                         hitDetected = true
                                         hitY = hitConnectorY
+                                        hitPitch = getPitchFromYPosition(hitConnectorY, bounds)
                                     end
                                 end
                             end
@@ -1795,6 +1854,93 @@ function drawLyricsVisualizer()
             -- Dibujar círculo interno (usando la nueva posición Y)
             gfx.r, gfx.g, gfx.b, gfx.a = 1.0, 1.0, 0.3, 1.0
             gfx.circle(noteLineConfig.hitLineX, finalHitY, noteLineConfig.hitCircleRadius, 1, 1)
+        end
+
+        -- LÓGICA DE AUDIO DEL PITCH GUIDE
+        if noteLineConfig.pitchGuideEnabled then
+            local playState = reaper.GetPlayState()
+            local isPlaying = (playState & 1) == 1
+            
+            reaper.gmem_write(0, 1) -- Pitch Guide Global Enabled
+            reaper.gmem_write(3, isPlaying and 1 or 0) -- Estado de reproducción
+            reaper.gmem_write(4, (noteLineConfig.pitchGuideFadeMs or 2.0) / 1000.0) -- Fade in/out en segundos
+            
+            if isPlaying then
+                -- MODO REPRODUCCIÓN: Escribir el buffer del futuro (los próximos 5 segundos)
+                local gmem_idx = 20
+                local valid_notes_count = 0
+                
+                for _, ph in ipairs(phrases) do
+                    local pStart = reaper.TimeMap2_beatsToTime(0, ph.startTime)
+                    local pEnd = reaper.TimeMap2_beatsToTime(0, ph.endTime)
+                    
+                    -- Escribir las frases que estén reproduciéndose o próximas (basado en la variable pitchGuideBufferSeconds)
+                    local bufferSec = noteLineConfig.pitchGuideBufferSeconds or 5.0
+                    if currentTimeSec >= pStart - bufferSec and currentTimeSec <= pEnd + bufferSec then
+                        for i, lyric in ipairs(ph.lyrics) do
+                            if lyric.pitch and lyric.pitch > 0 and lyric.pitch ~= HP then
+                                local isToneless = (lyric.pitch == 26 or lyric.pitch == 29 or lyric.isToneless)
+                                if not isToneless then
+                                    local lStart = reaper.TimeMap2_beatsToTime(0, lyric.startTime)
+                                    local lEnd = reaper.TimeMap2_beatsToTime(0, lyric.endTime)
+                                    
+                                    reaper.gmem_write(gmem_idx + 0, lStart)
+                                    reaper.gmem_write(gmem_idx + 1, lEnd)
+                                    reaper.gmem_write(gmem_idx + 2, midiToFrequency(lyric.pitch))
+                                    
+                                    -- Un conector es estrictamente un símbolo '+'
+                                    local isConnector = string.match(lyric.originalText, "^%+") ~= nil
+                                    reaper.gmem_write(gmem_idx + 3, isConnector and 0 or 1) -- 0 = Conector, 1 = Instantánea
+                                    
+                                    gmem_idx = gmem_idx + 4
+                                    valid_notes_count = valid_notes_count + 1
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                -- Decirle al JSFX cuántas notas hay en el buffer
+                reaper.gmem_write(10, valid_notes_count)
+            else
+                -- MODO PAUSA/EDICIÓN: Lógica de Clic manual al mover el cursor
+                local cursorPos = reaper.GetCursorPosition()
+                if noteLineConfig._lastCursorPos ~= cursorPos then
+                    noteLineConfig._lastCursorPos = cursorPos
+                    noteLineConfig._clickEndTime = reaper.time_precise() + 0.15 -- Click de 150ms
+                    
+                    -- Buscar qué nota está bajo el cursor para saber qué tono tocar
+                    local clickedFreq = 0
+                    for _, ph in ipairs(phrases) do
+                        local pStart = reaper.TimeMap2_beatsToTime(0, ph.startTime)
+                        local pEnd = reaper.TimeMap2_beatsToTime(0, ph.endTime)
+                        if cursorPos >= pStart and cursorPos <= pEnd then
+                            for _, lyric in ipairs(ph.lyrics) do
+                                if lyric.pitch and lyric.pitch > 0 and lyric.pitch ~= HP then
+                                    local lStart = reaper.TimeMap2_beatsToTime(0, lyric.startTime)
+                                    local lEnd = reaper.TimeMap2_beatsToTime(0, lyric.endTime)
+                                    local isToneless = (lyric.pitch == 26 or lyric.pitch == 29 or lyric.isToneless)
+                                    if not isToneless and cursorPos >= lStart and cursorPos <= lEnd then
+                                        clickedFreq = midiToFrequency(lyric.pitch)
+                                        break
+                                    end
+                                end
+                            end
+                        end
+                        if clickedFreq > 0 then break end
+                    end
+                    noteLineConfig._lastClickedFreq = clickedFreq
+                end
+                
+                if noteLineConfig._clickEndTime and reaper.time_precise() < noteLineConfig._clickEndTime and (noteLineConfig._lastClickedFreq or 0) > 0 then
+                    reaper.gmem_write(1, noteLineConfig._lastClickedFreq)
+                else
+                    reaper.gmem_write(1, 0) -- Silenciar clic
+                    noteLineConfig._clickEndTime = 0
+                end
+            end
+        else
+            reaper.gmem_write(0, 0) -- Pitch Guide Global Disabled
         end
     end
     
