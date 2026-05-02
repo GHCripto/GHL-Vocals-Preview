@@ -602,7 +602,7 @@ local noteLineConfig = {
     backgroundHeight         = 0.50,                                    -- Altura del fondo del gameplay (50% de la pantalla)
     yOffset                  = 0,                                       -- Posición vertical (se calcula dinámicamente)
     
-    -- LÍNEA DE HIT (HITLINE)
+    -- LÍNEA DE GOLPE (HITLINE)
     hitLineX                 = 150,                                     -- Posición horizontal de la línea de golpe (px)
     hitLineHeightMultiplier  = 1.5,                                     -- Multiplicador de altura de la HIT LINE en base a "highwayGameplayHeight"
     hitLineFollowsOffset     = false,                                   -- Activar/Desactivar el centrado vertical en base a "verticalCenterOffset"
@@ -636,7 +636,11 @@ local noteLineConfig = {
     _lastTimeSec             = -1000.0,
 
     vocalScrollSpeed         = 1.1,                                     -- Velocidad del desplazamiento de las notas. Mayor valor, más velocidad
-    vocalScrollSpeedBase     = 350,                                     -- Velocidad base de las notas en píxeles por segundo (295: GHL)
+    vocalScrollSpeedBase     = 1920 / 5.5,                              -- Velocidad base de las notas en píxeles por segundo (GHL: 1920 / 5.5 = ~349.09)
+
+    -- PIXEL SNAP POR EJE (GHL)
+    ghlPerfectPixelSnapX     = true,                                    -- Eje X: true = pixel perfecto, false = bordes suaves
+    ghlPerfectPixelSnapY     = true,                                    -- Eje Y: true = pixel perfecto, false = bordes suaves
 
     -- DEBUG
     showPaddingLines         = false,                                   -- Activar/Desactivar líneas del padding de pixeles (solo números impares)
@@ -682,28 +686,35 @@ end
 
 -- FÓRMULA DE ÍNDICES
 -- Convierte nota MIDI a Índice Visual GHL
-
--- Réplica de Math.trunc de JavaScript: trunca hacia cero (NO hacia -∞)
--- math.floor(-2.7) = -3, pero Math.trunc(-2.7) = -2
--- Esto importa para pitches bajos donde los términos de octava son negativos.
+-- Esto importa para pitches bajos donde los términos de octava son negativos
 local function truncToZero(x)
     if x >= 0 then return math.floor(x) else return math.ceil(x) end
 end
 
--- Pixel Snapping: réplica exacta de Math.trunc(x + 0.5) en JS
--- Para coordenadas positivas (pantalla) es idéntico a math.floor(x + 0.5),
--- pero para valores negativos replica el comportamiento exacto de JS.
+-- Pixel Snapping
 local function snap(x)
     return truncToZero(x + 0.5)
+end
+
+-- Snap de posición horizontal (eje X)
+local function snapX(x)
+    if noteLineConfig.ghlPerfectPixelSnapX then return snap(x) end
+    return x
+end
+
+-- Snap de posición vertical (eje Y)
+local function snapY(x)
+    if noteLineConfig.ghlPerfectPixelSnapY then return snap(x) end
+    return x
 end
 
 local function calculateGHLIndex(pitch)
     local base = pitch
     
-    -- Ajuste de Octava 1: truncToZero(val / 12.0 - 3.0)  ← JS: Math.trunc
+    -- Ajuste de Octava 1: truncToZero(val / 12.0 - 3.0)
     local term1 = truncToZero(base / 12.0 - 3.0)
     
-    -- Ajuste de Octava 2: truncToZero((val - 5.0) / 12.0 - 2.0)  ← JS: Math.trunc
+    -- Ajuste de Octava 2: truncToZero((val - 5.0) / 12.0 - 2.0)
     local term2 = truncToZero((base - 5.0) / 12.0 - 2.0)
     
     -- Fórmula maestra
@@ -718,8 +729,7 @@ local function calculatePaddedY(pitchNormalized, bounds)
     return bounds.bottom - (pitchNormalized * bounds.height)
 end
 
--- Z-Path: Calcula los puntos de la curva Z de GHL para una línea del conector.
--- Réplica exacta de ConnectorRenderer._traceGHLPath en JS.
+-- Z-Path: Calcula los puntos de la curva Z de GHL para una línea del conector
 local function getZPathPoints(startX, endX, startY, endY, isUpper, config)
     local dX = endX - startX
     local dY = endY - startY
@@ -761,7 +771,7 @@ local function drawZPath(startX, endX, startY, endY, isUpper, config)
         local p0 = points[seg]
         local p1 = points[seg + 1]
         for i = 0, thickness - 1 do
-            gfx.line(snap(p0.x), snap(p0.y) + yOff + i, snap(p1.x), snap(p1.y) + yOff + i, 1)
+            gfx.line(snapX(p0.x), snapY(p0.y) + yOff + i, snapX(p1.x), snapY(p1.y) + yOff + i, 1)
         end
     end
 end
@@ -927,7 +937,7 @@ function drawLyricsVisualizer()
         
         -- 5. Convertir a píxeles con pixel snap
         local finalY = calculatePaddedY(normalized, bounds) - yOffset
-        return snap(finalY)
+        return snapY(finalY)
     end
 
     local currentTimeSec = reaper.TimeMap2_beatsToTime(0, curBeat)
@@ -1026,8 +1036,8 @@ function drawLyricsVisualizer()
                     
                     -- Clipping Visual
                     if lineY >= clipTopY - 1 and lineY <= clipBottomY + 1 then
-                        local rectY = lineY - rectY_offset
-                        gfx.rect(0, rectY, gfx.w, thickness, 1)
+                        local rectY = snapY(lineY - rectY_offset)
+                        gfx.rect(snapX(0), rectY, gfx.w, thickness, 1)
                     end
                 end
             end
@@ -1233,8 +1243,8 @@ function drawLyricsVisualizer()
                     local endTimeSec = reaper.TimeMap2_beatsToTime(0, lyric.endTime)
                     local timeDiffStart = startTimeSec - currentTimeSec
                     local timeDiffEnd = endTimeSec - currentTimeSec
-                    local startX = noteLineConfig.hitLineX + (timeDiffStart * speed)
-                    local endX = noteLineConfig.hitLineX + (timeDiffEnd * speed)
+                    local startX = snapX(noteLineConfig.hitLineX + (timeDiffStart * speed))
+                    local endX = snapX(noteLineConfig.hitLineX + (timeDiffEnd * speed))
                     
                     -- Limitar a la ventana visible
                     local originalStartX = startX  -- Esto guarda el valor original antes de limitarlo
@@ -1285,9 +1295,9 @@ function drawLyricsVisualizer()
                         
                         -- Calcular las posiciones Y para las líneas superior e inferior, aplicando el estilo de offset (como en GHL, líneas perfectamente alineadas)
                         -- Pixel snap en las coordenadas Y de la nota
-                        lineY = snap(lineY)
-                        local upperLineY = snap(lineY - noteLineConfig.linesSpacing/2)
-                        local lowerLineY = snap(lineY + noteLineConfig.linesSpacing/2)
+                        lineY = snapY(lineY)
+                        local upperLineY = snapY(lineY - noteLineConfig.linesSpacing/2)
+                        local lowerLineY = snapY(lineY + noteLineConfig.linesSpacing/2)
                         
                         if noteLineConfig.noteLineStyle == "offset_top" then
                             upperLineY = upperLineY + 1
@@ -1415,9 +1425,9 @@ function drawLyricsVisualizer()
                     local startX_unclamped = noteLineConfig.hitLineX + (timeDiffStart * speed)
                     
                     if startX_unclamped < gfx.w then
-                        local fade_zone_width = 100.0 
-                        local text_x_position = startX_unclamped 
-                        local text_y_position = noteLineConfig.yOffset - 18
+                        local fade_zone_width = 100.0
+                        local text_x_position = snapX(startX_unclamped) 
+                        local text_y_position = snapY(noteLineConfig.yOffset - 18)
 
                         gfx.setfont(1, "SDK_JP_Web 85W", 22) -- Tamaño de la fuente de las letras en movimiento
                         
@@ -1546,10 +1556,10 @@ function drawLyricsVisualizer()
                          if not nextLyric.originalText:match("^%+") then -- No dibujar si hay una línea conectora "+"
                             if isVisible then
                                 -- Calcular posiciones "Y" para las líneas superior e inferior
-                                local upperCurrentY = currentLineY - noteLineConfig.linesSpacing/2
-                                local lowerCurrentY = currentLineY + noteLineConfig.linesSpacing/2
-                                local upperNextY = nextLineY - noteLineConfig.linesSpacing/2
-                                local lowerNextY = nextLineY + noteLineConfig.linesSpacing/2
+                                local upperCurrentY = snapY(currentLineY - noteLineConfig.linesSpacing/2)
+                                local lowerCurrentY = snapY(currentLineY + noteLineConfig.linesSpacing/2)
+                                local upperNextY = snapY(nextLineY - noteLineConfig.linesSpacing/2)
+                                local lowerNextY = snapY(nextLineY + noteLineConfig.linesSpacing/2)
 
                                 if noteLineConfig.noteLineStyle == "offset_top" then
                                     upperCurrentY = upperCurrentY + 1
