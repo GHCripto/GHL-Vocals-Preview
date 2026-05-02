@@ -6,12 +6,17 @@ Vocal HUD System independent of my [GHL Preview](https://github.com/GHCripto/GHL
 
 ## Installation instructions:
 1. Download .zip of repository
-2. Extract .lua **and** assets folder to **%appdata%/REAPER/Scripts**
+2. Extract .lua **and** assets folder to **%appdata%/REAPER/Scripts**  
+2.1. Extract Pitch_Guide.jsfx file and paste in **%appdata%/REAPER/Effects**  
+2.2. Click on **FX** button on any MIDI track, then in the menu above (FX), click on **"Scan for new plugins"** or **"F5"**  
+2.3. You should now see the new **Pitch Guide** effect in the list.  
 3. In REAPER, go to **Actions > Show action list...**
 4. Click **New action...** and then **Load ReaScript...**
 5. Navigate to **%appdata%/REAPER/Scripts**
-6. Select **GHL_Vocals_Preview.lua** and click **Open**
-7. Optionally, add a keybind, or use the Menu Editor to add the action to a menu
+6. Select **GHL_Vocals_Preview.lua** and click **Open**  
+7. Optionally, add a keybind, or use the Menu Editor to add the action to a menu  
+
+Note: Activating the Vocal HUD will automatically activate the Pitch Guide effect  
 
 ## Additional notes:
 For a better experience, use the included color map and the vocals note name!  
