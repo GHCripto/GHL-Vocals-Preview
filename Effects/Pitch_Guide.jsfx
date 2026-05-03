@@ -128,18 +128,20 @@ is_playing > 0 ? (
     // ==========================================
     midi_active > 0 ? (
         target_gain = 0.15;
-        target_freq != midi_freq ? (
+        (target_freq != midi_freq || current_freq == 0) ? (
             target_freq = midi_freq;
             current_freq = target_freq; // Instantáneo para MIDI nativo
         );
+        found_instant = 1; // Desactivar glide en pausa
     ) : enabled_gmem > 0 && gmem[1] > 0 ? (
         // Click al mover el cursor en pausa desde Lua
         // Lua ahora escribe en gmem[1] la frecuencia del click manual
         target_gain = 0.15;
-        target_freq != gmem[1] ? (
+        (target_freq != gmem[1] || current_freq == 0) ? (
             target_freq = gmem[1];
             current_freq = target_freq;
         );
+        found_instant = 1; // Desactivar glide en pausa
     ) : (
         target_gain = 0;
     );

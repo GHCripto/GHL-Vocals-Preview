@@ -353,7 +353,7 @@ local noteLineConfig = {
     -- PITCH GUIDE (Guía Tonal)
     pitchGuideEnabled        = true,                                    -- Activar el tono de guía (requiere plugin JSFX)
     pitchGuideBufferSeconds  = 5.0,                                     -- Segundos de notas futuras que se envían al sintetizador
-    pitchGuideFadeMs         = 0.0,                                     -- Milisegundos de fundido (Fade In/Out) para evitar clicks de audio
+    pitchGuideFadeSec        = 0.0,                                     -- Segundos de fundido (Fade In/Out) para evitar clicks. (0.002 = 2ms). 0 = Sin fundido
     
     -- DEBUG
     showPaddingLines         = false,                                   -- Activar/Desactivar líneas del padding de pixeles (solo números impares)
@@ -1863,7 +1863,7 @@ function drawLyricsVisualizer()
             
             reaper.gmem_write(0, 1) -- Pitch Guide Global Enabled
             reaper.gmem_write(3, isPlaying and 1 or 0) -- Estado de reproducción
-            reaper.gmem_write(4, (noteLineConfig.pitchGuideFadeMs or 2.0) / 1000.0) -- Fade in/out en segundos
+            reaper.gmem_write(4, noteLineConfig.pitchGuideFadeSec or 0.002) -- Fade in/out en segundos
             
             if isPlaying then
                 -- MODO REPRODUCCIÓN: Escribir el buffer del futuro (los próximos 5 segundos)
